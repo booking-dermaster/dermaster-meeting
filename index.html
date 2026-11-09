@@ -116,6 +116,10 @@
   .tag { display: inline-block; font-weight: 700; padding: 1px 7px; border-radius: 8px; background: var(--accent-tint); color: var(--accent); margin: 2px 4px 0 0; }
   .tag.now { background: #FBE4E2; color: #9A2A1F; }
   .tag.past { background: #ECEEF2; color: #465061; }
+  /* iOS: ช่องวัน/เวลาไม่ล้นกรอบ */
+  .grid2 > .field { min-width: 0; }
+  .field input[type=date], .field input[type=time] { -webkit-appearance: none; appearance: none; display: block; min-width: 0; max-width: 100%; height: 50px; line-height: 50px; padding-top: 0; padding-bottom: 0; text-align: center; }
+  .field input::-webkit-date-and-time-value { text-align: center; line-height: 50px; margin: 0; }
 </style>
 
   <style>
@@ -372,6 +376,7 @@ async function loadMy() {
       '<div class="t-meta">' + esc(b.branch) + ' · ' + esc(b.room) + '</div>' +
       '<div class="t-meta">' + esc(thDate(b.date)) + ' · ' + esc(b.start) + '–' + esc(b.end) + '</div>' +
       (b.request ? '<div class="t-meta">Special Request: ' + esc(b.request) + '</div>' : '') +
+      (b.booker ? '<div class="t-meta">ผู้จอง: ' + esc(b.booker) + '</div>' : '') +
       (canCancel ? '<button type="button" class="btn ghost small" data-cancel="' + esc(b.id) + '">ยกเลิกการจอง</button>' : '') + '</article>';
   }).join('<div style="height:10px"></div>');
   $('myList').onclick = async function (ev) {
