@@ -113,6 +113,9 @@
   #fatal h2 { font-size: 18px; }
   #fatal p { color: var(--muted); font-size: 14px; line-height: 1.6; max-width: 320px; }
   .hidden { display: none !important; }
+  .tag { display: inline-block; font-weight: 700; padding: 1px 7px; border-radius: 8px; background: var(--accent-tint); color: var(--accent); margin: 2px 4px 0 0; }
+  .tag.now { background: #FBE4E2; color: #9A2A1F; }
+  .tag.past { background: #ECEEF2; color: #465061; }
 </style>
 
   <style>
@@ -194,15 +197,29 @@
     <section data-tab="my"><div id="myList"></div></section>
 
     <section data-tab="cal">
-      <div class="navrow">
-        <button type="button" class="iconbtn" id="monPrev" aria-label="เดือนก่อนหน้า">‹</button>
-        <h2 id="monTitle"></h2>
-        <button type="button" class="iconbtn" id="monNext" aria-label="เดือนถัดไป">›</button>
+      <div class="seg" role="group" aria-label="มุมมองปฏิทิน">
+        <button type="button" id="viewDay" class="on">รายวัน</button>
+        <button type="button" id="viewMonth">รายเดือน</button>
       </div>
-      <p class="hint" id="monHint" style="text-align:center;margin:0"></p>
-      <div class="card"><div class="cal" id="monGrid"></div></div>
-      <h2 id="agendaTitle"></h2>
-      <div class="card tight" id="agenda"></div>
+      <div id="dayView" style="display:flex;flex-direction:column;gap:12px">
+        <div class="navrow">
+          <button type="button" class="iconbtn" id="dayPrev" aria-label="วันก่อนหน้า">‹</button>
+          <h2 id="dayTitle"></h2>
+          <button type="button" class="iconbtn" id="dayNext" aria-label="วันถัดไป">›</button>
+        </div>
+        <div class="stats" id="dayStats"></div>
+        <div class="card tight" id="dayRooms"></div>
+      </div>
+      <div id="monthView" class="hidden" style="flex-direction:column;gap:12px">
+        <div class="navrow">
+          <button type="button" class="iconbtn" id="monPrev" aria-label="เดือนก่อนหน้า">‹</button>
+          <h2 id="monTitle"></h2>
+          <button type="button" class="iconbtn" id="monNext" aria-label="เดือนถัดไป">›</button>
+        </div>
+        <p class="hint" id="monHint" style="text-align:center;margin:0"></p>
+        <div class="card"><div class="cal" id="monGrid"></div></div>
+        <p class="hint">ตัวเลข = จำนวนนัดในวันนั้น · แตะวันที่เพื่อดูรายห้อง</p>
+      </div>
     </section>
   </main>
   <div class="foot">เชื่อมข้อมูลกับ Google Sheet · Meeting_Booking</div>
@@ -216,7 +233,7 @@
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <script src="core.js"></script>
 <script>
-const M = { branch: '', room: '', busy: [], picks: [], calY: new Date().getFullYear(), calM: new Date().getMonth(), sel: ymd(new Date()), monthCache: {} };
+const M = { branch: '', room: '', busy: [], picks: [], view: 'day', day: ymd(new Date()), calY: new Date().getFullYear(), calM: new Date().getMonth(), monthCache: {} };
 
 startApp(function () {
   const b = S.boot;
@@ -232,10 +249,14 @@ startApp(function () {
   $('submitBtn').onclick = submitBooking;
   $('monPrev').onclick = function () { shiftMonth(-1); };
   $('monNext').onclick = function () { shiftMonth(1); };
+  $('viewDay').onclick = function () { setCalView('day'); };
+  $('viewMonth').onclick = function () { setCalView('month'); };
+  $('dayPrev').onclick = function () { M.day = shiftDay(M.day, -1); renderDay().catch(handleError); };
+  $('dayNext').onclick = function () { M.day = shiftDay(M.day, 1); renderDay().catch(handleError); };
   TABS.onShow.book = function () { $('branchBox').classList.remove('hidden'); };
   TABS.onShow.now = function () { $('branchBox').classList.remove('hidden'); return loadNow(); };
   TABS.onShow.my = function () { $('branchBox').classList.add('hidden'); return loadMy(); };
-  TABS.onShow.cal = function () { $('branchBox').classList.remove('hidden'); return renderCal(); };
+  TABS.onShow.cal = function () { $('branchBox').classList.remove('hidden'); return M.view === 'day' ? renderDay() : renderCal(); };
   pickBranch(b.branches[0]);
   if (TABS.onShow[TABS.current]) return TABS.onShow[TABS.current]();
 });
@@ -249,7 +270,7 @@ function pickBranch(name) {
   renderRooms();
   loadBusy();
   if (TABS.current === 'now') loadNow().catch(handleError);
-  if (TABS.current === 'cal') renderCal().catch(handleError);
+  if (TABS.current === 'cal') TABS.onShow.cal().catch(handleError);
 }
 
 function roomsOf(branch) { return S.boot.rooms.filter(function (r) { return r.branch === branch; }); }
@@ -361,24 +382,63 @@ async function loadMy() {
   };
 }
 
+/* ----- ปฏิทิน: รายวัน (รายห้อง) / รายเดือน ----- */
+function setCalView(v) {
+  M.view = v;
+  $('viewDay').classList.toggle('on', v === 'day');
+  $('viewMonth').classList.toggle('on', v === 'month');
+  $('dayView').classList.toggle('hidden', v !== 'day');
+  $('monthView').classList.toggle('hidden', v !== 'month');
+  if (v === 'month') { const d = parseYmd(M.day); M.calY = d.getFullYear(); M.calM = d.getMonth(); return renderCal().catch(handleError); }
+  return renderDay().catch(handleError);
+}
+
+async function monthList(y, m) {
+  const key = M.branch + '|' + y + '-' + m;
+  if (!M.monthCache[key]) M.monthCache[key] = await call('api_month', M.branch, y, m + 1);
+  return M.monthCache[key];
+}
+
+function nowHM() { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+
+async function renderDay() {
+  $('dayTitle').textContent = thDayLabel(M.day);
+  $('dayRooms').innerHTML = '<div class="empty">กำลังโหลด…</div>';
+  const d = parseYmd(M.day);
+  const list = (await monthList(d.getFullYear(), d.getMonth())).filter(function (b) { return b.date === M.day; });
+  const rooms = roomsOf(M.branch);
+  const isToday = M.day === S.boot.today, isPast = M.day < S.boot.today, now = nowHM();
+  let using = 0, withMeet = 0;
+  const rows = rooms.map(function (r) {
+    const items = list.filter(function (b) { return b.room === r.name; }).sort(function (a, b) { return a.start.localeCompare(b.start); });
+    const cur = isToday && items.filter(function (b) { return b.start <= now && now < b.end; })[0];
+    if (cur) using++;
+    if (items.length) withMeet++;
+    const tags = items.map(function (b) {
+      const cls = (isToday && b.start <= now && now < b.end) ? 'tag now' : (isPast || (isToday && b.end <= now)) ? 'tag past' : 'tag';
+      return '<span class="' + cls + '">' + esc(b.start) + '–' + esc(b.end) + '</span><span style="font-size:13px">' + esc(b.title) + '</span>';
+    }).join('<br>');
+    const pill = cur ? '<span class="pill bad">กำลังใช้งาน</span>' : items.length ? '<span class="pill wait">มีนัด ' + items.length + '</span>' : '<span class="pill ok">ว่าง</span>';
+    return '<div class="list-item"><span class="grow"><span style="font-size:16px;font-weight:700">' + esc(r.name) + '</span>' +
+      (tags ? '<span>' + tags + '</span>' : '<span class="t-meta">—</span>') + '</span>' + pill + '</div>';
+  });
+  $('dayStats').innerHTML = '<div class="stat"><b style="color:var(--accent)">' + list.length + '</b><span>นัดวันนี้</span></div>' +
+    '<div class="stat"><b>' + withMeet + '</b><span>ห้องมีนัด</span></div>' +
+    '<div class="stat"><b>' + (isToday ? using : '–') + '</b><span>กำลังใช้</span></div>' +
+    '<div class="stat"><b style="color:#1B6337">' + (rooms.length - withMeet) + '</b><span>ว่างทั้งวัน</span></div>';
+  $('dayRooms').innerHTML = rows.length ? rows.join('') : '<div class="empty">สาขานี้ยังไม่มีห้อง</div>';
+}
+
 async function renderCal() {
   $('monTitle').textContent = monthTitle(M.calY, M.calM);
-  const key = M.branch + '|' + M.calY + '-' + M.calM;
-  if (!M.monthCache[key]) M.monthCache[key] = await call('api_month', M.branch, M.calY, M.calM + 1);
-  const list = M.monthCache[key];
+  const list = await monthList(M.calY, M.calM);
   const byDay = {};
-  list.forEach(function (b) { (byDay[b.date] = byDay[b.date] || []).push(b); });
+  list.forEach(function (b) { byDay[b.date] = (byDay[b.date] || 0) + 1; });
   $('monHint').textContent = M.branch + ' · ทั้งเดือน ' + list.length + ' นัด';
-  renderMonth($('monGrid'), M.calY, M.calM, M.sel, function (ds) {
-    const n = (byDay[ds] || []).length;
+  renderMonth($('monGrid'), M.calY, M.calM, M.day, function (ds) {
+    const n = byDay[ds] || 0;
     return { has: n > 0, label: n ? n + ' นัด' : '' };
-  }, function (ds) { M.sel = ds; renderCal().catch(handleError); });
-  const items = (M.sel.slice(0, 7) === M.calY + '-' + pad2(M.calM + 1)) ? (byDay[M.sel] || []) : null;
-  $('agendaTitle').textContent = items ? thDayLabel(M.sel) : 'แตะวันที่เพื่อดูรายการประชุม';
-  $('agenda').innerHTML = !items ? '<div class="empty">—</div>' : items.length ? items.map(function (b) {
-    return '<div class="list-item"><b style="width:92px;flex:none;font-size:12px;color:var(--accent)">' + esc(b.start) + '–' + esc(b.end) + '</b>' +
-      '<span class="grow"><span style="font-size:14px;font-weight:600">' + esc(b.title) + '</span><span class="t-meta">' + esc(b.room) + '</span></span></div>';
-  }).join('') : '<div class="empty">ยังไม่มีการจอง · ทุกห้องว่าง</div>';
+  }, function (ds) { M.day = ds; setCalView('day'); });
 }
 
 function shiftMonth(k) {
